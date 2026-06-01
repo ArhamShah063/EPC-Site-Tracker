@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 
-# ─── PAGE CONFIG ───────────────────────────────────────────────
+# ─── PAGE CONFIG 
 st.set_page_config(
     page_title="EPC Site Launch Tracker",
     page_icon="🏗️",
@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ─── PROFESSIONAL CSS ──────────────────────────────────────────
+# ─── PROFESSIONAL CSS 
 st.markdown("""
 <style>
     /* Metric cards */
@@ -63,7 +63,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── HEADER ────────────────────────────────────────────────────
+# ─── HEADER 
 st.markdown("""
 <div style="background:linear-gradient(135deg,#1a1f3c 0%,#1e3a8a 100%);
             border-radius:16px; padding:28px 36px; margin-bottom:20px;
@@ -82,7 +82,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ─── FILE UPLOAD ───────────────────────────────────────────────
+# ─── FILE UPLOAD 
 with st.expander("📂 Upload Data Source", expanded=True):
     uploaded_file = st.file_uploader(
         "Upload Master Data (Excel or CSV)",
@@ -93,14 +93,14 @@ with st.expander("📂 Upload Data Source", expanded=True):
         st.info("Upload your master data file to begin. Accepts .xlsx, .xls, or .csv format.")
         st.stop()
 
-# ─── DATA LOADING ──────────────────────────────────────────────
+# ─── DATA LOADING 
 @st.cache_data
 def load_data(file):
     return pd.read_csv(file) if file.name.endswith(".csv") else pd.read_excel(file)
 
 df = load_data(uploaded_file)
 
-# ─── DATE PARSING ──────────────────────────────────────────────
+# ─── DATE PARSING 
 DATE_COLS = [
     "Planned Finish Date", "Actual Finish Date",
     "Forecasted Finish Date", "Actual Start Date", "RFC Date"
@@ -111,7 +111,7 @@ for col in DATE_COLS:
 
 today = pd.Timestamp.today().normalize()
 
-# ─── MATHEMATICALLY CORRECT DELAY CALCULATION ──────────────────
+# ─── MATHEMATICALLY CORRECT DELAY CALCULATION 
 # LAUNCHED  → delay = max(0, actual_finish  − planned_finish)
 # YTL       → delay = max(0, (forecasted OR today) − planned_finish)
 # Missing planned date → 0
@@ -136,7 +136,7 @@ df["Is Delayed"]   = df["Delay (Days)"] > 0
 df["_launched"] = df["LAUNCHED / YTL"].fillna("").str.strip().str.upper() == "LAUNCHED"
 df["_pending"]  = ~df["_launched"]
 
-# ─── KPI CALCULATIONS (CORRECT) ────────────────────────────────
+# ─── KPI CALCULATIONS (CORRECT) 
 # On-time = sites that ARE launched AND are NOT delayed (not a subtraction hack)
 total       = len(df)
 launched    = int(df["_launched"].sum())
@@ -147,7 +147,7 @@ avg_delay   = df.loc[df["Is Delayed"], "Delay (Days)"].mean() if df["Is Delayed"
 launch_pct  = round(launched / total * 100, 1) if total else 0.0
 delay_pct   = round(delayed  / total * 100, 1) if total else 0.0
 
-# ─── SHARED LAYOUT HELPERS ─────────────────────────────────────
+# ─── SHARED LAYOUT HELPERS 
 PLOT_CFG = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     paper_bgcolor="rgba(0,0,0,0)",
@@ -157,9 +157,9 @@ PLOT_CFG = dict(
 GRID = dict(showgrid=True, gridcolor="rgba(0,0,0,0.07)")
 
 
-# ══════════════════════════════════════════════════════════════
+# 
 # NAVIGATION
-# ══════════════════════════════════════════════════════════════
+# 
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊  Dashboard",
     "🔍  Store Search & Analysis",
@@ -168,12 +168,12 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 
-# ══════════════════════════════════════════════════════════════
+
 # TAB 1 — DASHBOARD
-# ══════════════════════════════════════════════════════════════
+# 
 with tab1:
 
-    # ── KPI Row ──────────────────────────────────────────────
+    # ── KPI Row 
     st.markdown("#### Project Snapshot")
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Total Sites",       total)
@@ -185,7 +185,7 @@ with tab1:
 
     st.divider()
 
-    # ── Zone Charts Row ──────────────────────────────────────
+    # ── Zone Charts Row 
     zc1, zc2 = st.columns(2)
 
     with zc1:
@@ -230,7 +230,7 @@ with tab1:
         fig2.update_layout(height=380, yaxis=GRID, **PLOT_CFG)
         zc2.plotly_chart(fig2, use_container_width=True)
 
-    # ── PM Performance Matrix ─────────────────────────────────
+    # ── PM Performance Matrix 
     st.markdown("#### Project Manager Performance Matrix")
     pm_agg = (
         df.groupby("PM", dropna=True)
@@ -272,7 +272,7 @@ with tab1:
 
     st.divider()
 
-    # ── S-Curve ──────────────────────────────────────────────
+    # ── S-Curve 
     st.markdown("#### 📈 S-Curve — Cumulative Planned vs Actual Launches")
 
     MONTHS = [
@@ -349,14 +349,14 @@ with tab1:
         st.success("✅ Actual launches are on track or ahead of plan.")
 
 
-# ══════════════════════════════════════════════════════════════
+# 
 # TAB 2 — STORE SEARCH & ANALYSIS
-# ══════════════════════════════════════════════════════════════
+# 
 with tab2:
 
-    # ─────────────────────────────────────────────────────────
+    # 
     # SECTION A — STORE LOOKUP
-    # ─────────────────────────────────────────────────────────
+    # 
     st.markdown("### 🔍 Store Lookup")
     st.caption("Search by name (partial or exact) to view full store data, milestone timeline, and benchmarks.")
 
@@ -389,7 +389,7 @@ with tab2:
     if store is not None:
         st.divider()
 
-        # ── Profile Card ──────────────────────────────────────
+        # ── Profile Card 
         raw_status = store.get("LAUNCHED / YTL")
         status     = str(raw_status).strip().upper() if not pd.isna(raw_status) else "N/A"
         delay_days = int(store.get("Delay (Days)", 0))
@@ -442,7 +442,7 @@ with tab2:
                   delta_color="inverse" if delay_days > 0 else "normal")
         m5.metric("Status", status)
 
-        # ── Complete Record Table ──────────────────────────────
+        # ── Complete Record Table 
         st.markdown("#### 📋 Complete Store Record")
         record_rows = []
         for field, val in zip(store.index, store.values):
@@ -469,7 +469,7 @@ with tab2:
             height=400
         )
 
-        # ── Milestone Timeline ─────────────────────────────────
+        # ── Milestone Timeline 
         st.markdown("#### 📅 Milestone Timeline")
         timeline_map = {
             "Actual Start":      store.get("Actual Start Date"),
@@ -530,7 +530,7 @@ with tab2:
         else:
             st.info("No milestone date data available for this store.")
 
-        # ── Benchmark Comparison ──────────────────────────────
+        # ── Benchmark Comparison 
         st.markdown("#### 📊 Benchmark Comparison")
         bc1, bc2 = st.columns(2)
 
@@ -585,9 +585,9 @@ with tab2:
     elif not query:
         st.info("👆 Type a store name above to view its full profile, timeline, and analytics.")
 
-    # ─────────────────────────────────────────────────────────
+    # 
     # SECTION B — CUSTOM PLOT BUILDER
-    # ─────────────────────────────────────────────────────────
+    # 
     st.divider()
     st.markdown("### 🎛️ Custom Parameter Plot Builder")
     st.caption(
@@ -631,7 +631,7 @@ with tab2:
         mtype = METRICS[metric_sel]
         grp   = df.groupby(dim_sel, dropna=True)
 
-        # ── Aggregations (all mathematically correct) ────────
+        # ── Aggregations (all mathematically correct) 
         if mtype == "count":
             agg = grp.size().reset_index(name="Value")
 
@@ -669,7 +669,7 @@ with tab2:
 
         agg = agg.dropna(subset=["Value"])
 
-        # ── Sort ─────────────────────────────────────────────
+        # ── Sort 
         if sort_order == "Value (↓ High→Low)":
             agg = agg.sort_values("Value", ascending=False)
         elif sort_order == "Value (↑ Low→High)":
@@ -679,7 +679,7 @@ with tab2:
 
         title_str = f"{metric_sel} by {dim_sel}"
 
-        # ── Chart generation ─────────────────────────────────
+        # ── Chart generation 
         if chart_sel == "Bar":
             fig_cp = px.bar(
                 agg, x=dim_sel, y="Value",
@@ -739,9 +739,9 @@ with tab2:
         st.info("No suitable categorical columns detected in the uploaded file.")
 
 
-# ══════════════════════════════════════════════════════════════
+# 
 # TAB 3 — DELAY ANALYSIS
-# ══════════════════════════════════════════════════════════════
+# 
 with tab3:
     st.markdown("### ⚠️ Delay Analysis")
     st.caption("Filter by any dimension to drill into delayed sites. Table is sorted by delay severity.")
@@ -826,9 +826,9 @@ with tab3:
         )
 
 
-# ══════════════════════════════════════════════════════════════
+# 
 # TAB 4 — AI SUMMARY
-# ══════════════════════════════════════════════════════════════
+# 
 with tab4:
     st.markdown("### 🤖 AI Executive Summary Generator")
     st.caption("Powered by Groq LLaMA-3.3-70B · Generates a management-ready briefing from live project data.")
@@ -938,7 +938,7 @@ Be direct, data-driven, specific. No filler language. No preamble."""
             st.info("Set `GROQ_API_KEY` in `.streamlit/secrets.toml` to enable AI summaries.")
 
 
-# ─── FOOTER ────────────────────────────────────────────────────
+# ─── FOOTER 
 st.divider()
 st.caption(
     "EPC Site Launch Tracker &nbsp;·&nbsp; Built with Streamlit & Plotly "
