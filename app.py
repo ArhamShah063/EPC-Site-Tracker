@@ -1,249 +1,519 @@
+```python
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
+import plotly.graph_objects as go
 
+# ---------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------
 st.set_page_config(
-    page_title="EPC Site Launch Tracker",
+    page_title="EPC PMO Control Tower",
     page_icon="🏗️",
     layout="wide"
 )
 
-st.title("🏗️ EPC Site Launch Progress Tracker")
-st.caption("Upload the master data sheet to get instant insights — no manual work needed.")
+st.title("🏗️ EPC PMO Control Tower")
+st.caption("Portfolio Monitoring • Delay Analytics • Launch Tracking")
 
-# ─── FILE UPLOAD ───────────────────────────────────────────────
+# ---------------------------------------------------
+# FILE UPLOAD
+# ---------------------------------------------------
 uploaded_file = st.file_uploader(
-    "Upload Master Data (Excel or CSV)",
+    "Upload EPC Master Data",
     type=["xlsx", "xls", "csv"]
 )
 
 if uploaded_file is None:
-    st.info("👆 Upload your master data file above to get started. Use the sample_data.csv for a demo.")
+    st.info("Upload the EPC master dataset to continue.")
     st.stop()
 
-# ─── LOAD & CLEAN DATA ─────────────────────────────────────────
+# ---------------------------------------------------
+# LOAD DATA
+# ---------------------------------------------------
 @st.cache_data
 def load_data(file):
     if file.name.endswith(".csv"):
-        df = pd.read_csv(file)
-    else:
-        df = pd.read_excel(file)
-    return df
+        return pd.read_csv(file)
+    return pd.read_excel(file)
 
 df = load_data(uploaded_file)
 
-date_cols = ["Planned Finish Date", "Actual Finish Date",
-             "Forecasted Finish Date", "Actual Start Date", "RFC Date"]
-for col in date_cols:
-    if col in df.columns:
-        df[col] = pd.to_datetime(df[col], errors="coerce")
+# ---------------------------------------------------
+# REQUIRED COLUMNS
+# ---------------------------------------------------
+required_cols = [
+    "Site Name",
+    "Zone",
+    "State",
+    "PM",
+    "Actual Start Date",
+    "Planned Finish Date",
+    "Forecasted Finish Date",
+    "Actual Finish Date",
+    "LAUNCHED / YTL",
+    "Planned (Month) Bucket",
+    "Actual (Month) Bucket",
+    "Area (Sqft)"
+]
 
+missing = [c for c in required_cols if c not in df.columns]
+
+if missing:
+    st.error(f"Missing Columns: {missing}")
+    st.write("Columns found:")
+    st.write(df.columns.tolist())
+    st.stop()
+
+# ---------------------------------------------------
+# DATE CLEANING
+# ---------------------------------------------------
+date_cols = [
+    "Actual Start Date",
+    "Planned Finish Date",
+    "Forecasted Finish Date",
+    "Actual Finish Date"
+]
+
+for col in date_cols:
+    df[col] = pd.to_datetime(df[col], errors="coerce")
+
+# ---------------------------------------------------
+# CALCULATIONS
+# ---------------------------------------------------
 df["Delay (Days)"] = (
-    df["Actual Finish Date"] - df["Planned Finish Date"]
-).dt.days.fillna(0).astype(int)
+    df["Actual Finish Date"]
+    - df["Planned Finish Date"]
+).dt.days
+
+df["Delay (Days)"] = df["Delay (Days)"].fillna(0)
+
 df["Is Delayed"] = df["Delay (Days)"] > 0
 
-# ─── KPI CARDS ─────────────────────────────────────────────────
-st.subheader("📊 Project Snapshot")
+df["Forecast Error"] = (
+    df["Actual Finish Date"]
+    - df["Forecasted Finish Date"]
+).dt.days
 
-total      = len(df)
-launched   = int((df["LAUNCHED / YTL"] == "LAUNCHED").sum())
-ytl        = int((df["LAUNCHED / YTL"] == "YTL").sum())
-delayed    = int(df["Is Delayed"].sum())
-avg_delay  = df[df["Is Delayed"]]["Delay (Days)"].mean()
-launch_pct = round(launched / total * 100, 1) if total else 0
+# ---------------------------------------------------
+# SIDEBAR FILTERS
+# ---------------------------------------------------
+st.sidebar.header("Filters")
 
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("Total Sites",      total)
-c2.metric("Launched",         launched, f"{launch_pct}%")
-c3.metric("Yet to Launch",    ytl)
-c4.metric("Sites Delayed",    delayed)
-c5.metric("Avg Delay (Days)", f"{avg_delay:.0f}" if not pd.isna(avg_delay) else "0")
-c6.metric("On-Time Launches", launched - delayed if launched > delayed else 0)
+zone_filter = st.sidebar.multiselect(
+    "Zone",
+    sorted(df["Zone"].dropna().unique()),
+    default=sorted(df["Zone"].dropna().unique())
+)
+
+state_filter = st.sidebar.multiselect(
+    "State",
+    sorted(df["State"].dropna().unique()),
+    default=sorted(df["State"].dropna().unique())
+)
+
+pm_filter = st.sidebar.multiselect(
+    "PM",
+    sorted(df["PM"].dropna().unique()),
+    default=sorted(df["PM"].dropna().unique())
+)
+
+status_filter = st.sidebar.multiselect(
+    "Launch Status",
+    ["LAUNCHED", "YTL"],
+    default=["LAUNCHED", "YTL"]
+)
+
+delay_threshold = st.sidebar.slider(
+    "Minimum Delay Days",
+    0,
+    180,
+    0
+)
+
+fdf = df.copy()
+
+fdf = fdf[fdf["Zone"].isin(zone_filter)]
+fdf = fdf[fdf["State"].isin(state_filter)]
+fdf = fdf[fdf["PM"].isin(pm_filter)]
+fdf = fdf[fdf["LAUNCHED / YTL"].isin(status_filter)]
+fdf = fdf[fdf["Delay (Days)"] >= delay_threshold]
+
+# ---------------------------------------------------
+# KPI SECTION
+# ---------------------------------------------------
+st.subheader("Executive Dashboard")
+
+total = len(fdf)
+
+launched = (
+    fdf["LAUNCHED / YTL"] == "LAUNCHED"
+).sum()
+
+ytl = (
+    fdf["LAUNCHED / YTL"] == "YTL"
+).sum()
+
+delayed = fdf["Is Delayed"].sum()
+
+avg_delay = round(
+    fdf["Delay (Days)"].mean(), 1
+)
+
+on_time = (
+    (fdf["Delay (Days)"] <= 0)
+    &
+    (fdf["LAUNCHED / YTL"] == "LAUNCHED")
+).sum()
+
+on_time_pct = (
+    round(on_time / total * 100, 1)
+    if total
+    else 0
+)
+
+health_score = max(
+    0,
+    round(
+        100 - (
+            fdf["Delay (Days)"]
+            .clip(lower=0)
+            .mean() / 30 * 100
+        ),
+        1
+    )
+)
+
+c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
+
+c1.metric("Total Sites", total)
+c2.metric("Launched", launched)
+c3.metric("YTL", ytl)
+c4.metric("Delayed", delayed)
+c5.metric("Avg Delay", avg_delay)
+c6.metric("On Time %", on_time_pct)
+c7.metric("Health Score", health_score)
 
 st.divider()
 
-# ─── FILTERS ───────────────────────────────────────────────────
-st.subheader("🔍 Delay Analysis")
+# ---------------------------------------------------
+# SITE SEARCH
+# ---------------------------------------------------
+st.subheader("Site Search")
 
-f1, f2, f3, f4 = st.columns(4)
-zones   = ["All"] + sorted(df["Zone"].dropna().unique().tolist())
-pms     = ["All"] + sorted(df["PM"].dropna().unique().tolist())
-states  = ["All"] + sorted(df["State"].dropna().unique().tolist())
-statuses = ["All", "LAUNCHED", "YTL"]
+site_search = st.text_input(
+    "Search Site Name"
+)
 
-zone_f   = f1.selectbox("Zone",   zones)
-pm_f     = f2.selectbox("PM",     pms)
-state_f  = f3.selectbox("State",  states)
-status_f = f4.selectbox("Status", statuses)
+if site_search:
+    search_df = fdf[
+        fdf["Site Name"]
+        .str.contains(
+            site_search,
+            case=False,
+            na=False
+        )
+    ]
 
-fdf = df.copy()
-if zone_f   != "All": fdf = fdf[fdf["Zone"]             == zone_f]
-if pm_f     != "All": fdf = fdf[fdf["PM"]               == pm_f]
-if state_f  != "All": fdf = fdf[fdf["State"]            == state_f]
-if status_f != "All": fdf = fdf[fdf["LAUNCHED / YTL"]   == status_f]
-
-show_cols = ["Site Name", "Zone", "State", "PM",
-             "Planned Finish Date", "Actual Finish Date",
-             "Delay (Days)", "LAUNCHED / YTL"]
-
-delayed_df = fdf[fdf["Is Delayed"]].sort_values("Delay (Days)", ascending=False)
-
-if delayed_df.empty:
-    st.success("✅ No delayed sites for the selected filters.")
-else:
     st.dataframe(
-        delayed_df[show_cols].reset_index(drop=True),
+        search_df,
         use_container_width=True
     )
 
-st.divider()
+# ---------------------------------------------------
+# DELAY TABLE
+# ---------------------------------------------------
+st.subheader("Delayed Sites")
 
-# ─── CHARTS ────────────────────────────────────────────────────
-ch1, ch2 = st.columns(2)
-
-with ch1:
-    st.subheader("Delays by Zone")
-    zone_delay = df.groupby("Zone")["Is Delayed"].sum().reset_index()
-    zone_delay.columns = ["Zone", "Delayed Sites"]
-    fig_bar = px.bar(
-        zone_delay, x="Zone", y="Delayed Sites",
-        color="Delayed Sites", color_continuous_scale="Reds",
-        title="Number of Delayed Sites per Zone"
+delay_table = (
+    fdf[fdf["Is Delayed"]]
+    .sort_values(
+        "Delay (Days)",
+        ascending=False
     )
-    fig_bar.update_layout(showlegend=False, height=350)
-    st.plotly_chart(fig_bar, use_container_width=True)
+)
 
-with ch2:
-    st.subheader("Launch Status by Zone")
-    zone_status = df.groupby(["Zone", "LAUNCHED / YTL"]).size().reset_index(name="Count")
-    fig_pie = px.bar(
-        zone_status, x="Zone", y="Count",
+st.dataframe(
+    delay_table,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# CHARTS ROW 1
+# ---------------------------------------------------
+col1,col2 = st.columns(2)
+
+with col1:
+
+    zone_delay = (
+        fdf.groupby("Zone")
+        ["Is Delayed"]
+        .sum()
+        .reset_index()
+    )
+
+    fig = px.bar(
+        zone_delay,
+        x="Zone",
+        y="Is Delayed",
+        color="Is Delayed",
+        title="Delayed Sites by Zone"
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+with col2:
+
+    status_zone = (
+        fdf.groupby(
+            ["Zone","LAUNCHED / YTL"]
+        )
+        .size()
+        .reset_index(name="Count")
+    )
+
+    fig = px.bar(
+        status_zone,
+        x="Zone",
+        y="Count",
         color="LAUNCHED / YTL",
         barmode="group",
-        color_discrete_map={"LAUNCHED": "#2ecc71", "YTL": "#e74c3c"},
-        title="Launched vs YTL by Zone"
+        title="Launch Status by Zone"
     )
-    fig_pie.update_layout(height=350)
-    st.plotly_chart(fig_pie, use_container_width=True)
 
-st.divider()
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
-# ─── S-CURVE ───────────────────────────────────────────────────
-st.subheader("📈 S-Curve: Cumulative Planned vs Actual Launches")
+# ---------------------------------------------------
+# HEATMAP
+# ---------------------------------------------------
+st.subheader("Delay Heatmap")
 
-MONTH_ORDER = [
-    "Apr-24","May-24","Jun-24","Jul-24","Aug-24","Sep-24",
-    "Oct-24","Nov-24","Dec-24","Jan-25","Feb-25","Mar-25",
-    "Apr-25","May-25","Jun-25","Jul-25","Aug-25","Sep-25",
-    "Oct-25","Nov-25","Dec-25"
-]
+heat = pd.pivot_table(
+    fdf,
+    values="Delay (Days)",
+    index="State",
+    columns="Zone",
+    aggfunc="mean"
+)
+
+fig = px.imshow(
+    heat,
+    text_auto=True,
+    aspect="auto"
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# PM PERFORMANCE
+# ---------------------------------------------------
+st.subheader("PM Performance")
+
+pm_perf = (
+    fdf.groupby("PM")
+    .agg(
+        Sites=("Site Name","count"),
+        Avg_Delay=("Delay (Days)","mean")
+    )
+    .reset_index()
+)
+
+fig = px.bar(
+    pm_perf,
+    x="PM",
+    y="Avg_Delay",
+    color="Avg_Delay"
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# TREEMAP
+# ---------------------------------------------------
+st.subheader("Portfolio Treemap")
+
+fig = px.treemap(
+    fdf,
+    path=["Zone","State","Site Name"],
+    values="Area (Sqft)",
+    color="Delay (Days)"
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# GANTT CHART
+# ---------------------------------------------------
+st.subheader("Project Gantt Chart")
+
+gantt = fdf.copy()
+
+fig = px.timeline(
+    gantt,
+    x_start="Actual Start Date",
+    x_end="Planned Finish Date",
+    y="Site Name",
+    color="Zone"
+)
+
+fig.update_yaxes(
+    autorange="reversed"
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# BUBBLE CHART
+# ---------------------------------------------------
+st.subheader("Area vs Delay")
+
+fig = px.scatter(
+    fdf,
+    x="Area (Sqft)",
+    y="Delay (Days)",
+    size="Area (Sqft)",
+    color="Zone",
+    hover_name="Site Name"
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# FORECAST ACCURACY
+# ---------------------------------------------------
+st.subheader("Forecast Accuracy")
+
+fig = px.histogram(
+    fdf,
+    x="Forecast Error",
+    nbins=25
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# S CURVE
+# ---------------------------------------------------
+st.subheader("S Curve")
 
 planned_counts = (
-    df["Planned (Month) Bucket"]
+    fdf["Planned (Month) Bucket"]
     .value_counts()
-    .reindex(MONTH_ORDER, fill_value=0)
+    .sort_index()
 )
 
 actual_counts = (
-    df[df["Actual (Month) Bucket"].notna() & (df["Actual (Month) Bucket"] != "")]
-    ["Actual (Month) Bucket"]
+    fdf["Actual (Month) Bucket"]
+    .dropna()
     .value_counts()
-    .reindex(MONTH_ORDER, fill_value=0)
+    .sort_index()
+)
+
+all_months = sorted(
+    set(planned_counts.index)
+    |
+    set(actual_counts.index)
+)
+
+planned_counts = planned_counts.reindex(
+    all_months,
+    fill_value=0
+)
+
+actual_counts = actual_counts.reindex(
+    all_months,
+    fill_value=0
 )
 
 planned_cum = planned_counts.cumsum()
-actual_cum  = actual_counts.cumsum()
+actual_cum = actual_counts.cumsum()
 
-fig_s = go.Figure()
-fig_s.add_trace(go.Scatter(
-    x=MONTH_ORDER, y=planned_cum.values,
-    mode="lines+markers", name="Planned",
-    line=dict(color="#3498db", dash="dash", width=2),
-    marker=dict(size=6)
-))
-fig_s.add_trace(go.Scatter(
-    x=MONTH_ORDER, y=actual_cum.values,
-    mode="lines+markers", name="Actual",
-    line=dict(color="#2ecc71", width=2),
-    marker=dict(size=6)
-))
-fig_s.update_layout(
-    xaxis_title="Month",
-    yaxis_title="Cumulative Sites Launched",
-    height=420,
-    legend=dict(x=0.01, y=0.99),
-    hovermode="x unified"
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter(
+        x=all_months,
+        y=planned_cum,
+        mode="lines+markers",
+        name="Planned"
+    )
 )
-st.plotly_chart(fig_s, use_container_width=True)
 
-# Gap annotation
-gap = int(planned_cum.iloc[-1] - actual_cum.iloc[-1])
-if gap > 0:
-    st.warning(f"⚠️ Current gap: **{gap} sites** are behind planned cumulative launches.")
-else:
-    st.success("✅ Actual launches are on track or ahead of plan.")
-
-st.divider()
-
-# ─── AI SUMMARY ────────────────────────────────────────────────
-st.subheader("🤖 AI Weekly Summary")
-st.caption("Generates a ready-to-paste executive paragraph from your data.")
-
-if st.button("Generate AI Summary", type="primary"):
-    top5 = (
-        df[df["Is Delayed"]][["Site Name", "Zone", "PM", "Delay (Days)"]]
-        .sort_values("Delay (Days)", ascending=False)
-        .head(5)
-        .to_string(index=False)
+fig.add_trace(
+    go.Scatter(
+        x=all_months,
+        y=actual_cum,
+        mode="lines+markers",
+        name="Actual"
     )
+)
 
-    zone_summary = (
-        df.groupby("Zone")
-        .agg(Total=("Site Name","count"), Launched=("LAUNCHED / YTL", lambda x:(x=="LAUNCHED").sum()))
-        .assign(Pending=lambda d: d["Total"]-d["Launched"])
-        .to_string()
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------------------------------------------
+# TOP RISK SITES
+# ---------------------------------------------------
+st.subheader("Top Risk Sites")
+
+risk_sites = (
+    fdf.sort_values(
+        "Delay (Days)",
+        ascending=False
     )
+    .head(15)
+)
 
-    prompt = f"""You are a project reporting assistant for an EPC department at a large retail company.
+st.dataframe(
+    risk_sites[
+        [
+            "Site Name",
+            "Zone",
+            "State",
+            "PM",
+            "Delay (Days)"
+        ]
+    ],
+    use_container_width=True
+)
 
-Weekly Project Data:
-- Total Sites: {total}
-- Launched: {launched} ({launch_pct}%)
-- Yet to Launch: {ytl}
-- Sites with Delays: {delayed}
-- Average Delay: {avg_delay:.0f} days
+# ---------------------------------------------------
+# EXPORT
+# ---------------------------------------------------
+st.subheader("Export")
 
-Zone-wise Summary:
-{zone_summary}
+csv = fdf.to_csv(index=False)
 
-Top 5 Most Delayed Sites:
-{top5}
-
-Write a professional 2-paragraph executive summary for the weekly management review meeting.
-Paragraph 1: Overall project status and progress.
-Paragraph 2: Key risks, delay patterns, and one specific recommended action.
-Be direct and factual. No fluff."""
-
-    try:
-        from groq import Groq
-        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=450
-        )
-        summary = response.choices[0].message.content
-
-        st.success(summary)
-        st.download_button(
-            "📥 Download Summary as .txt",
-            data=summary,
-            file_name="weekly_summary.txt",
-            mime="text/plain"
-        )
-
-    except Exception as e:
-        st.error(f"AI call failed: {e}")
-        st.info("Make sure GROQ_API_KEY is set in your Streamlit secrets.")
+st.download_button(
+    "Download Filtered Data",
+    csv,
+    file_name="filtered_epc_data.csv",
+    mime="text/csv"
+)
+```
