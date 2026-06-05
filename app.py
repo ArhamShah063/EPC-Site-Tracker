@@ -6,16 +6,25 @@ import numpy as np
 from datetime import date as date_type
 
 # ─── SUPABASE CONNECTION
+DB_OK = False
+DB_ERROR = ""
+sb = None
+
 @st.cache_resource
 def get_supabase():
     from supabase import create_client
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    url = st.secrets.get("SUPABASE_URL", "")
+    key = st.secrets.get("SUPABASE_KEY", "")
+    if not url or not key:
+        raise ValueError("SUPABASE_URL or SUPABASE_KEY missing from secrets")
+    return create_client(url, key)
 
 try:
     sb = get_supabase()
     DB_OK = True
-except Exception:
+except Exception as e:
     DB_OK = False
+    DB_ERROR = str(e)
 
 # ─── PAGE CONFIG
 st.set_page_config(
@@ -96,15 +105,140 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─── FILE UPLOAD
-with st.expander("📂 Upload Data Source", expanded=True):
+with st.expander("📂 Upload Data Source (Managers & Planners)", expanded=True):
     uploaded_file = st.file_uploader(
         "Upload Master Data (Excel or CSV)",
         type=["xlsx", "xls", "csv"],
         help="Upload your EPC master tracking sheet — supports .xlsx, .xls, .csv"
     )
     if uploaded_file is None:
-        st.info("Upload your master data file to begin. Accepts .xlsx, .xls, or .csv format.")
-        st.stop()
+        st.info("📋 Site Engineers & Zonal Heads: Use the Inspection Log and Issue Tracker tabs directly — no upload needed. | 📊 Managers & Planners: Upload your master data file above to access all dashboard tabs.")
+
+# ─── ENGINEER-ONLY TABS (no upload needed)
+if uploaded_file is None:
+    eng_tab1, eng_tab2 = st.tabs(["📋  Inspection Log", "✅  Issue Tracker"])
+
+    with eng_tab1:
+        st.markdown("### 📋 Inspection Log")
+        st.caption("Zonal heads log site visits, observations, and flag issues.")
+
+        if not DB_OK:
+            st.error(f"Database not connected: {DB_ERROR}")
+            st.info("Check SUPABASE_URL and SUPABASE_KEY in Streamlit secrets.")
+            st.stop()
+
+        with st.form("inspection_form_eng", clear_on_submit=True):
+            st.markdown("#### Log New Inspection")
+            if1, if2 = st.columns(2)
+            insp_site = if1.text_input("Site Name", placeholder="e.g. Reliance Smart Mumbai - 3")
+            insp_id   = if2.text_input("Site Unique ID (optional)", placeholder="e.g. APEX10023")
+            insp_zh   = st.text_input("Zonal Head Name", placeholder="Enter your full name")
+            id1, id2  = st.columns(2)
+            insp_date = id1.date_input("Inspection Date", value=date_type.today())
+            insp_time = id2.time_input("Inspection Time")
+            insp_notes = st.text_area("General Observations / Notes",
+                                      placeholder="Overall site condition, progress, concerns…", height=100)
+            st.markdown("#### Issues Found During Inspection")
+            st.caption("Leave blank if no issue. Add up to 6.")
+            issues_to_save = []
+            for i in range(6):
+                ic1, ic2 = st.columns([4, 1])
+                i_desc = ic1.text_input(f"Issue {i+1}", placeholder=f"Describe issue {i+1}…", key=f"eng_idesc_{i}")
+                i_sev  = ic2.selectbox("Severity", ["Low","Medium","High","Critical"], key=f"eng_isev_{i}")
+                if i_desc.strip():
+                    issues_to_save.append({"description": i_desc.strip(), "severity": i_sev})
+            submitted = st.form_submit_button("✅ Submit Inspection", type="primary")
+            if submitted:
+                if not insp_site.strip() or not insp_zh.strip():
+                    st.error("Site Name and Zonal Head Name are required.")
+                else:
+                    try:
+                        site_label = insp_site.strip()
+                        if insp_id.strip():
+                            site_label = f"{insp_site.strip()} ({insp_id.strip()})"
+                        insp_payload = {
+                            "site_name":       site_label,
+                            "zonal_head":      insp_zh.strip(),
+                            "inspection_date": str(insp_date),
+                            "inspection_time": str(insp_time),
+                            "notes":           insp_notes.strip()
+                        }
+                        result  = sb.table("inspections").insert(insp_payload).execute()
+                        insp_id_saved = result.data[0]["id"]
+                        for iss in issues_to_save:
+                            sb.table("issues").insert({
+                                "inspection_id":     insp_id_saved,
+                                "issue_description": iss["description"],
+                                "severity":          iss["severity"],
+                                "status":            "Open"
+                            }).execute()
+                        st.success(f"✅ Inspection logged for **{site_label}**. {len(issues_to_save)} issue(s) recorded.")
+                    except Exception as e:
+                        st.error(f"Failed to save: {e}")
+
+        st.divider()
+        st.markdown("#### Recent Inspections")
+        try:
+            recent = sb.table("inspections").select("site_name, zonal_head, inspection_date, inspection_time, notes").order("created_at", desc=True).limit(20).execute()
+            if recent.data:
+                st.dataframe(pd.DataFrame(recent.data), use_container_width=True, hide_index=True)
+            else:
+                st.info("No inspections logged yet.")
+        except Exception as e:
+            st.warning(f"Could not load recent inspections: {e}")
+
+    with eng_tab2:
+        st.markdown("### ✅ Issue Tracker & Engineer Checklist")
+        st.caption("View and resolve issues flagged during inspections.")
+
+        if not DB_OK:
+            st.error(f"Database not connected: {DB_ERROR}")
+            st.stop()
+
+        it_site = st.text_input("Enter Your Site Name or ID", placeholder="e.g. Reliance Smart Mumbai - 3 or APEX10023")
+
+        if it_site.strip():
+            try:
+                insp_for_site = sb.table("inspections").select("id, zonal_head, inspection_date, notes").ilike("site_name", f"%{it_site.strip()}%").order("inspection_date", desc=True).execute()
+                if not insp_for_site.data:
+                    st.info("No inspections recorded for this site yet.")
+                else:
+                    all_issues = []
+                    for insp in insp_for_site.data:
+                        iss = sb.table("issues").select("*").eq("inspection_id", insp["id"]).execute()
+                        for issue in iss.data:
+                            issue["inspection_date"] = insp["inspection_date"]
+                            issue["zonal_head"]      = insp["zonal_head"]
+                            all_issues.append(issue)
+                    open_issues     = [i for i in all_issues if i["status"] == "Open"]
+                    resolved_issues = [i for i in all_issues if i["status"] == "Resolved"]
+                    im1, im2, im3 = st.columns(3)
+                    im1.metric("Total Issues",    len(all_issues))
+                    im2.metric("Open",            len(open_issues),     delta=f"{len(open_issues)} need action", delta_color="inverse")
+                    im3.metric("Resolved",        len(resolved_issues), delta=f"{len(resolved_issues)} done",    delta_color="normal")
+                    st.divider()
+                    if open_issues:
+                        st.markdown("#### 🔴 Open Issues — Action Required")
+                        for iss in sorted(open_issues, key=lambda x: ["Critical","High","Medium","Low"].index(x.get("severity","Low"))):
+                            sev_icon = {"Low":"🟡","Medium":"🟠","High":"🔴","Critical":"🚨"}.get(iss["severity"],"⚪")
+                            rc1, rc2, rc3 = st.columns([4, 1, 1])
+                            rc1.markdown(f"{sev_icon} **{iss['issue_description']} — Flagged by {iss['zonal_head']} on {iss['inspection_date']}")
+                            rc2.markdown(f"**{iss['severity']}**")
+                            if rc3.button("Mark Resolved ✅", key=f"eng_res_{iss['id']}"):
+                                sb.table("issues").update({"status": "Resolved"}).eq("id", iss["id"]).execute()
+                                st.rerun()
+                    else:
+                        st.success("✅ All issues resolved for this site.")
+                    if resolved_issues:
+                        with st.expander(f"✅ {len(resolved_issues)} Resolved Issue(s)"):
+                            for iss in resolved_issues:
+                                st.markdown(f"✅ ~~{iss['issue_description']}~~ · *{iss['zonal_head']}* · {iss['inspection_date']}")
+            except Exception as e:
+                st.error(f"Could not load issues: {e}")
+        else:
+            st.info("Enter your site name or ID above to see open issues.")
+
+    st.stop()
 
 # ─── DATA LOADING
 @st.cache_data
@@ -1042,7 +1176,8 @@ with tab5:
     st.caption("Zonal heads log site visits, observations, and flag issues.")
 
     if not DB_OK:
-        st.error("Database not connected. Check SUPABASE_URL and SUPABASE_KEY in Streamlit secrets.")
+        st.error(f"Database not connected: {DB_ERROR}")
+        st.info("Check SUPABASE_URL and SUPABASE_KEY in Streamlit secrets.")
         st.stop()
 
     site_list = sorted(df["Site Name"].dropna().unique().tolist())
@@ -1122,7 +1257,8 @@ with tab6:
     st.caption("Site engineers view issues flagged during inspections and mark them resolved.")
 
     if not DB_OK:
-        st.error("Database not connected. Check SUPABASE_URL and SUPABASE_KEY in Streamlit secrets.")
+        st.error(f"Database not connected: {DB_ERROR}")
+        st.info("Check SUPABASE_URL and SUPABASE_KEY in Streamlit secrets.")
         st.stop()
 
     site_list2 = sorted(df["Site Name"].dropna().unique().tolist())
